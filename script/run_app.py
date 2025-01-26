@@ -11,7 +11,7 @@ import folium
 
 # 设置页面配置
 st.set_page_config(
-    page_title="汽车服务数据展示",
+    page_title="一线城市汽车服务数据展示",
     page_icon="🚗",
     layout="wide"
 )
@@ -33,7 +33,200 @@ def get_connection():
 conn = get_connection()
 
 # 页面标题
-st.title('汽车服务数据展示')
+st.title('一线城市汽车服务数据展示')
+
+# 全局统计部分
+st.subheader('整体数据概览')
+
+# 获取全局统计数据
+@st.cache_data
+def get_global_stats():
+    # 首先获取总数和平均价格
+    stats_query = """
+    SELECT 
+        COUNT(*) as total_shops,
+        AVG(CASE WHEN 价格 <= 300 THEN 价格 END) as avg_price
+    FROM dianping_car 
+    WHERE 三类 = '美容洗车' AND 价格 IS NOT NULL AND 价格 <= 300
+    """
+    
+    # 单独计算中位数
+    median_query = """
+    WITH ValidPrices AS (
+        SELECT 价格
+        FROM dianping_car 
+        WHERE 三类 = '美容洗车' 
+        AND 价格 IS NOT NULL 
+        AND 价格 <= 300
+        ORDER BY 价格
+    )
+    SELECT AVG(价格) as median_price
+    FROM (
+        SELECT 价格
+        FROM ValidPrices
+        LIMIT 2 - (SELECT COUNT(*) FROM ValidPrices) % 2    -- odd 1, even 2
+        OFFSET (SELECT (COUNT(*) - 1) / 2 FROM ValidPrices)
+    );
+    """
+    
+    # 执行查询
+    stats_df = pd.read_sql_query(stats_query, conn)
+    median_df = pd.read_sql_query(median_query, conn)
+    
+    # 合并结果
+    stats_df['median_price'] = median_df['median_price'].iloc[0]
+    
+    return stats_df
+
+# 获取城市分布数据
+@st.cache_data
+def get_city_stats():
+    city_query = """
+    SELECT 
+        市 as city,
+        COUNT(*) as shop_count,
+        AVG(CASE WHEN 价格 <= 300 THEN 价格 END) as avg_price
+    FROM dianping_car 
+    WHERE 三类 = '美容洗车'
+    GROUP BY 市
+    HAVING 市 IS NOT NULL
+    ORDER BY shop_count DESC
+    """
+    return pd.read_sql_query(city_query, conn)
+
+# 获取统计数据
+global_stats = get_global_stats()
+city_stats = get_city_stats()
+
+# 显示关键指标
+total_shops = city_stats['shop_count'].sum()
+avg_price = global_stats.iloc[0]['avg_price']
+median_price = global_stats.iloc[0]['median_price']
+
+# 使用列布局显示所有概览数据（调整为一行）
+overview_col1, overview_col2, overview_col3 = st.columns([1, 2, 2])
+
+# 关键指标放在第一列
+with overview_col1:
+    st.metric(
+        "🏪 美容洗车店铺总数",
+        f"{total_shops:,}家",
+        help="全国美容洗车店铺总数"
+    )
+    
+    st.metric(
+        "💰 平均价格",
+        f"¥{avg_price:.1f}",
+        help="所有店铺的平均价格（≤300元）"
+    )
+    
+    st.metric(
+        "📊 中位价格",
+        f"¥{median_price:.1f}",
+        help="所有店铺的中位价格"
+    )
+
+# 饼图放在第二列
+with overview_col2:
+    # 创建城市分布饼图
+    fig_pie = go.Figure(data=[go.Pie(
+        labels=city_stats['city'],
+        values=city_stats['shop_count'],
+        hole=0.4,
+        textinfo='label+percent',
+        hovertemplate="城市: %{label}<br>店铺数: %{value}<br>占比: %{percent}<extra></extra>"
+    )])
+    
+    fig_pie.update_layout(
+        title={
+            'text': '各城市美容洗车店铺分布',
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top'
+        },
+        height=400,
+        showlegend=False,
+        margin=dict(t=30, b=0)  # 减小上下边距
+    )
+    
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+# 柱状图放在第三列
+with overview_col3:
+    # 创建城市统计柱状图
+    fig_bar = go.Figure()
+    
+    # 添加店铺数量柱状图
+    fig_bar.add_trace(go.Bar(
+        name='店铺数量',
+        x=city_stats['city'],
+        y=city_stats['shop_count'],
+        text=city_stats['shop_count'],
+        textposition='outside',
+        yaxis='y1',
+        marker_color='#1f77b4'
+    ))
+    
+    # 添加平均价格线图
+    fig_bar.add_trace(go.Scatter(
+        name='平均价格',
+        x=city_stats['city'],
+        y=city_stats['avg_price'],
+        text=[f'¥{price:.0f}' for price in city_stats['avg_price']],
+        textposition='top center',
+        yaxis='y2',
+        mode='lines+markers+text',
+        line=dict(color='#ff7f0e'),
+        marker=dict(size=8)
+    ))
+    
+    # 更新布局，调整高度以匹配其他图表
+    fig_bar.update_layout(
+        title={
+            'text': '各城市店铺数量与平均价格',
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top'
+        },
+        yaxis=dict(
+            title='店铺数量',
+            titlefont=dict(color='#1f77b4'),
+            tickfont=dict(color='#1f77b4'),
+            rangemode='tozero',
+            automargin=True
+        ),
+        yaxis2=dict(
+            title='平均价格 (元)',
+            titlefont=dict(color='#ff7f0e'),
+            tickfont=dict(color='#ff7f0e'),
+            overlaying='y',
+            side='right',
+            rangemode='tozero',
+            automargin=True
+        ),
+        height=400,  # 调整高度以匹配饼图
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(
+            l=50,
+            r=50,
+            t=30,  # 减小上边距
+            b=0    # 减小下边距
+        )
+    )
+    
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+# 添加分隔线
+st.markdown("---")
 
 # 添加城市坐标映射
 CITY_COORDINATES = {
