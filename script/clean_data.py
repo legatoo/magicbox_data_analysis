@@ -55,83 +55,70 @@ def clean_price(price):
     return None
 
 
-def init_database(data_path):
-    """初始化数据库并返回连接"""
-    # 读取CSV文件，确保正确处理中文编码
-    data = pd.read_csv(data_path, encoding='utf-8')
+def init_database(data_dir):
+    """
+    初始化数据库，加载raw文件夹下所有的CSV文件
+    
+    Args:
+        data_dir: raw文件夹的路径
+    Returns:
+        sqlite3.Connection: 数据库连接
+    """
+    # 创建内存数据库
+    conn = sqlite3.connect(':memory:', check_same_thread=False)
+    
+    # 获取所有CSV文件
+    csv_files = [f for f in os.listdir(data_dir) if f.endswith('.csv')]
+    
+    if not csv_files:
+        raise FileNotFoundError(f"在 {data_dir} 目录下没有找到CSV文件")
+    
+    # 读取并合并所有CSV文件
+    all_data = []
+    for csv_file in csv_files:
+        file_path = os.path.join(data_dir, csv_file)
+        try:
+            df = pd.read_csv(file_path, encoding='utf-8')
+            # 清理价格数据
+            if '价格' in df.columns:
+                df['价格'] = df['价格'].apply(clean_price)
+            all_data.append(df)
+            print(f"成功加载文件: {csv_file}")
+        except UnicodeDecodeError:
+            try:
+                # 如果UTF-8编码失败，尝试GBK编码
+                df = pd.read_csv(file_path, encoding='gbk')
+                # 清理价格数据
+                if '价格' in df.columns:
+                    df['价格'] = df['价格'].apply(clean_price)
+                all_data.append(df)
+                print(f"成功加载文件: {csv_file}")
+            except Exception as e:
+                print(f"无法加载文件 {csv_file}: {str(e)}")
+                continue
+    
+    if not all_data:
+        raise ValueError("没有成功加载任何数据文件")
+    
+    # 合并所有数据框
+    combined_df = pd.concat(all_data, ignore_index=True)
     
     # 检查经纬度数据
     print("\n经纬度数据检查:")
-    print(f"lng类型: {data['lng'].dtype}")
-    print(f"lat类型: {data['lat'].dtype}")
-    print(f"lng范围: {data['lng'].min()} - {data['lng'].max()}")
-    print(f"lat范围: {data['lat'].min()} - {data['lat'].max()}")
+    if 'lng' in combined_df.columns and 'lat' in combined_df.columns:
+        print(f"lng范围: {combined_df['lng'].min()} - {combined_df['lng'].max()}")
+        print(f"lat范围: {combined_df['lat'].min()} - {combined_df['lat'].max()}")
     
-    # 清理价格数据
-    if '价格' in data.columns:
-        data['价格'] = data['价格'].apply(clean_price)
-        # 显示清理结果
-        print("\n价格数据清理结果:")
-        print(f"- 非空价格数据数量: {data['价格'].count()}")
-        print(f"- 空值数量: {data['价格'].isna().sum()}")
-        print("- 价格数据示例:")
-        print(data['价格'].head())
+    # 将数据写入SQLite数据库
+    combined_df.to_sql('dianping_car', conn, if_exists='replace', index=False)
     
-    # 连接到SQLite内存数据库
-    conn = sqlite3.connect(':memory:', check_same_thread=False)
-    cursor = conn.cursor()
-    
-    # 生成建表语句
-    table_name = "dianping_car"
-    create_table_sql = f"CREATE TABLE {table_name} (\n"
-    create_table_sql += "    id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
-    
-    # 添加列定义
-    column_definitions = []
-    for column in data.columns:
-        if column == 'id':
-            continue
-        sqlite_type = get_mysql_type(column, data[column].dtype)
-        column_definitions.append(f"    `{column}` {sqlite_type}")
-    
-    create_table_sql += ",\n".join(column_definitions)
-    create_table_sql += "\n);"
-    
-    print("\nSQLite建表语句：")
-    print(create_table_sql)
-    
-    # 执行建表语句
-    cursor.execute(create_table_sql)
-    
-    # 准备插入数据的SQL语句
-    columns = [col for col in data.columns if col != 'id']  # 排除id列
-    columns_str = '`, `'.join(columns)
-    placeholders = ', '.join(['?' for _ in columns])
-    insert_sql = f"INSERT INTO {table_name} (`{columns_str}`) VALUES ({placeholders})"
-    
-    # 插入数据
-    print("\n开始插入数据...")
-    total_rows = len(data)
-    for _, row in data.iterrows():
-        values = tuple(row[columns])
-        cursor.execute(insert_sql, values)
-    
-    # 提交事务
-    conn.commit()
-    
-    # 验证数据插入
-    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-    inserted_count = cursor.fetchone()[0]
-    print(f"\n数据统计:")
-    print(f"- 原始数据总行数: {total_rows}")
-    print(f"- 成功插入行数: {inserted_count}")
-    
+    print(f"\n总共加载了 {len(csv_files)} 个文件，{len(combined_df)} 条记录")
     return conn
 
 
 if __name__ == "__main__":
-    data_path = os.path.join("raw", "dianping_car_beijing_202410.csv")
-    conn = init_database(data_path)
+    data_dir = os.path.join("raw")
+    conn = init_database(data_dir)
     
     # 保持数据库连接开启
     # conn.close()  # 注释掉这行，保持连接
