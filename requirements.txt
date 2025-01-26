@@ -1,5 +1,5 @@
-streamlit
-pandas
-folium
-streamlit-folium
-plotly 
+streamlit>=1.31.0
+pandas>=2.2.0
+folium>=0.15.1
+streamlit-folium>=0.18.0
+plotly>=5.19.0 
