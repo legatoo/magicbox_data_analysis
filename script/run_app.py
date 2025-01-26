@@ -41,11 +41,12 @@ st.subheader('整体数据概览')
 # 获取全局统计数据
 @st.cache_data
 def get_global_stats():
-    # 首先获取总数和平均价格
+    # 首先获取总数、平均价格和地下店铺占比
     stats_query = """
     SELECT 
         COUNT(*) as total_shops,
-        AVG(CASE WHEN 价格 <= 300 THEN 价格 END) as avg_price
+        AVG(CASE WHEN 价格 <= 300 THEN 价格 END) as avg_price,
+        ROUND(CAST(SUM(CASE WHEN 位置类型 = '地下' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100, 1) as underground_ratio
     FROM dianping_car 
     WHERE 三类 = '美容洗车' AND 价格 IS NOT NULL AND 价格 <= 300
     """
@@ -124,6 +125,13 @@ with overview_col1:
         "📊 中位价格",
         f"¥{median_price:.1f}",
         help="所有店铺的中位价格"
+    )
+    
+    underground_ratio = global_stats.iloc[0]['underground_ratio']
+    st.metric(
+        "🏬 地下店铺占比",
+        f"{underground_ratio}%",
+        help="位于地下的店铺数量占总店铺数的百分比"
     )
 
 # 饼图放在第二列
@@ -377,7 +385,8 @@ if has_confirmed_search:
         lat,
         价格,
         评分,
-        星级
+        星级,
+        位置类型
     FROM dianping_car 
     WHERE """ + " AND ".join(conditions)
     
@@ -408,20 +417,24 @@ if has_confirmed_search:
                             lng = float(row['lng'])
                             # 根据不同城市调整经纬度范围检查
                             if abs(lat - city_location[0]) < 1 and abs(lng - city_location[1]) < 1:
+                                # 根据位置类型设置标记颜色
+                                marker_color = 'green' if row['位置类型'] == '地下' else 'red'
+                                
                                 # 构建popup内容
                                 popup_content = f"""
                                     <div style='font-family: Arial, sans-serif;'>
                                         <b>{row['名称']}</b><br>
                                         价格: {'¥' + str(int(row['价格'])) if pd.notna(row['价格']) else '暂无'}<br>
                                         评分: {row['评分'] if pd.notna(row['评分']) else '暂无'}<br>
-                                        {'⭐' * int(float(row['星级'])) if pd.notna(row['星级']) else ''}
+                                        {'⭐' * int(float(row['星级'])) if pd.notna(row['星级']) else ''}<br>
+                                        位置: {row['位置类型']}
                                     </div>
                                 """
                                 
                                 CircleMarker(
                                     location=[lat, lng],
                                     radius=5,
-                                    color='red',
+                                    color=marker_color,  # 使用根据位置类型设置的颜色
                                     fill=True,
                                     popup=folium.Popup(
                                         popup_content,
@@ -454,6 +467,10 @@ if has_confirmed_search:
             total_prices = map_df[map_df['价格'].notna()]['价格']
             total_count = len(total_prices)
             
+            # 计算地下店铺占比
+            underground_count = len(map_df[map_df['位置类型'] == '地下'])
+            underground_ratio = (underground_count / total_shops * 100) if total_shops > 0 else 0
+            
             if not valid_prices.empty:
                 # 使用容器和列布局来美化统计信息的展示
                 with st.container():
@@ -471,7 +488,7 @@ if has_confirmed_search:
                 st.markdown("#### 📊 数据统计")
                 
                 # 所有指标放在一排
-                metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
                 
                 with metric_col1:
                     st.metric(
@@ -504,6 +521,14 @@ if has_confirmed_search:
                         f"{len(valid_prices):,}条",
                         f"有效率 {valid_ratio:.1f}%",
                         help=f"总数据 {total_count:,} 条\n价格≤300元的数据被视为有效数据"
+                    )
+                
+                with metric_col5:
+                    st.metric(
+                        "🏬 地下店铺",
+                        f"{underground_count}家",
+                        f"占比 {underground_ratio:.1f}%",
+                        help=f"位于地下的店铺数量及占比\n地下店铺: {underground_count}家\n地上店铺: {total_shops - underground_count}家"
                     )
                 
                 st.markdown("---")  # 添加分隔线
@@ -605,16 +630,28 @@ SELECT
     市,
     区,
     商圈,
-    地址
+    地址,
+    位置类型
 FROM dianping_car 
 """
 if conditions:
     page_query += " WHERE " + " AND ".join(conditions)
-page_query += " LIMIT 100 OFFSET ?"
+page_query += " ORDER BY id LIMIT 100 OFFSET ?"
 page_params = params + [offset]
 
 # 获取分页数据
 df = pd.read_sql_query(page_query, conn, params=page_params)
+
+# 调整列的显示顺序
+columns_order = [
+    '名称', '一类', '二类', '三类', '价格', '评分', '星级', '评论数',
+    '省', '市', '区', '商圈', '地址', '位置类型'
+]
+df = df[columns_order]
+
+# 打印调试信息
+print("数据字段:", df.columns.tolist())
+print("位置类型统计:", df['位置类型'].value_counts() if '位置类型' in df.columns else "无位置类型字段")
 
 # 显示查询结果信息
 st.subheader('查询结果')

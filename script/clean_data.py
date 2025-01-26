@@ -55,15 +55,32 @@ def clean_price(price):
     return None
 
 
-def init_database(data_dir):
-    """
-    初始化数据库，加载raw文件夹下所有的CSV文件
+def parse_location_type(address):
+    """解析地址判断店铺位置类型"""
+    if pd.isna(address):
+        return None
+        
+    address = str(address).lower()
     
-    Args:
-        data_dir: raw文件夹的路径
-    Returns:
-        sqlite3.Connection: 数据库连接
-    """
+    # 地下位置关键词
+    underground_keywords = [
+        'b1', 'b2', 'b3', 'b4', 
+        '负一', '负二', '负三', '负1', '负2', '负3', 
+        '地下一', '地下二', '地下三', '地下1', '地下2', '地下3', 
+        '地下室', '地下'
+    ]
+    
+    # 检查是否包含地下关键词
+    for keyword in underground_keywords:
+        if keyword in address:
+            return '地下'
+    
+    # 如果不是地下，就是地上
+    return '地上'
+
+
+def init_database(data_dir):
+    """初始化数据库，加载raw文件夹下所有的CSV文件"""
     # 创建内存数据库
     conn = sqlite3.connect(':memory:', check_same_thread=False)
     
@@ -78,24 +95,29 @@ def init_database(data_dir):
     for csv_file in csv_files:
         file_path = os.path.join(data_dir, csv_file)
         try:
-            df = pd.read_csv(file_path, encoding='utf-8')
-            # 清理价格数据
+            # 读取CSV文件
+            try:
+                df = pd.read_csv(file_path, encoding='utf-8')
+            except UnicodeDecodeError:
+                df = pd.read_csv(file_path, encoding='gbk')
+            
+            # 数据清理和转换
             if '价格' in df.columns:
                 df['价格'] = df['价格'].apply(clean_price)
+            
+            # 解析地址获取位置类型
+            if '地址' in df.columns:
+                df['位置类型'] = df['地址'].apply(parse_location_type)
+                print(f"文件 {csv_file} 中解析到的位置类型分布:")
+                print(df['位置类型'].value_counts())
+            else:
+                print(f"警告: 文件 {csv_file} 中没有地址字段")
+            
             all_data.append(df)
             print(f"成功加载文件: {csv_file}")
-        except UnicodeDecodeError:
-            try:
-                # 如果UTF-8编码失败，尝试GBK编码
-                df = pd.read_csv(file_path, encoding='gbk')
-                # 清理价格数据
-                if '价格' in df.columns:
-                    df['价格'] = df['价格'].apply(clean_price)
-                all_data.append(df)
-                print(f"成功加载文件: {csv_file}")
-            except Exception as e:
-                print(f"无法加载文件 {csv_file}: {str(e)}")
-                continue
+        except Exception as e:
+            print(f"处理文件 {csv_file} 时出错: {str(e)}")
+            continue
     
     if not all_data:
         raise ValueError("没有成功加载任何数据文件")
@@ -103,16 +125,31 @@ def init_database(data_dir):
     # 合并所有数据框
     combined_df = pd.concat(all_data, ignore_index=True)
     
-    # 检查经纬度数据
-    print("\n经纬度数据检查:")
-    if 'lng' in combined_df.columns and 'lat' in combined_df.columns:
-        print(f"lng范围: {combined_df['lng'].min()} - {combined_df['lng'].max()}")
-        print(f"lat范围: {combined_df['lat'].min()} - {combined_df['lat'].max()}")
+    # 打印最终数据的位置类型分布
+    print("\n最终数据的位置类型分布:")
+    if '位置类型' in combined_df.columns:
+        print(combined_df['位置类型'].value_counts())
+    else:
+        print("警告: 最终数据中没有位置类型字段")
     
     # 将数据写入SQLite数据库
     combined_df.to_sql('dianping_car', conn, if_exists='replace', index=False)
     
-    print(f"\n总共加载了 {len(csv_files)} 个文件，{len(combined_df)} 条记录")
+    # 验证数据库中的位置类型字段
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(dianping_car)")
+    columns = cursor.fetchall()
+    print("\n数据库表结构:")
+    for col in columns:
+        print(f"列名: {col[1]}, 类型: {col[2]}")
+    
+    # 检查位置类型数据
+    cursor.execute("SELECT COUNT(*) as count, 位置类型 FROM dianping_car GROUP BY 位置类型")
+    type_counts = cursor.fetchall()
+    print("\n数据库中的位置类型统计:")
+    for count, type_name in type_counts:
+        print(f"{type_name}: {count}条")
+    
     return conn
 
 
