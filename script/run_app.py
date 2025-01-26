@@ -8,7 +8,7 @@ from clean_data import init_database
 
 # 设置页面配置
 st.set_page_config(
-    page_title="大众点评数据展示",
+    page_title="汽车服务数据展示",
     page_icon="🚗",
     layout="wide"
 )
@@ -30,7 +30,7 @@ def get_connection():
 conn = get_connection()
 
 # 页面标题
-st.title('大众点评汽车服务数据展示')
+st.title('汽车服务数据展示')
 
 # 修改获取筛选选项的函数，添加城市选项
 @st.cache_data
