@@ -1,7 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
-import folium
+from folium import Map, CircleMarker
 from folium.plugins import HeatMap
 from streamlit_folium import st_folium  # 需要安装：pip install streamlit-folium
 from clean_data import init_database
@@ -145,7 +145,7 @@ if has_confirmed_search:
         if not map_df.empty and 'lng' in map_df.columns and 'lat' in map_df.columns:
             try:
                 # 创建地图，以北京为中心
-                m = folium.Map(
+                m = Map(
                     location=[39.9042, 116.4074],
                     zoom_start=11,
                     tiles='cartodbpositron'
@@ -159,7 +159,7 @@ if has_confirmed_search:
                             lat = float(row['lat'])
                             lng = float(row['lng'])
                             if 35 < lat < 42 and 115 < lng < 117:
-                                folium.CircleMarker(
+                                CircleMarker(
                                     location=[lat, lng],
                                     radius=5,
                                     color='red',
